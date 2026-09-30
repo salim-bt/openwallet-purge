@@ -1,4 +1,4 @@
-# openwallet-purge
+# owpurge
 
 Askar wallet pruning for multi-tenant SSI platforms — a single static binary with no
 runtime dependencies.
@@ -30,7 +30,7 @@ behaviour — is never reached.
 ## Build
 
 ```sh
-cargo build --release          # -> target/release/credo-purge  (~3.4 MB)
+cargo build --release          # -> target/release/owpurge  (~3.4 MB)
 ```
 
 Only system libraries are dynamically linked (no OpenSSL — TLS is rustls, compiled in).
@@ -64,15 +64,18 @@ the runner's own toolchain on purpose: the runner links against glibc 2.39, whic
 would not start on Amazon Linux 2023 (glibc 2.34). The build log prints the binary's
 glibc floor so a mismatch shows up there rather than on the host.
 
-On a private repo the release assets need an authenticated download — a plain `curl` of
-the browser URL returns HTML, not the binary. Run this from a checkout, or pass
+The repo is public, so the assets download without auth — a plain `curl -L` of the
+asset URL works. `gh` is just the convenient route from a checkout; otherwise pass
 `-R <owner>/<repo>`:
 
 ```sh
-gh release download v0.1.0 -p 'credo-purge-linux-aarch64*'
-sha256sum -c credo-purge-linux-aarch64.sha256
-chmod +x credo-purge-linux-aarch64
+gh release download v0.1.1 -p 'owpurge-linux-aarch64*'
+sha256sum -c owpurge-linux-aarch64.sha256
+chmod +x owpurge-linux-aarch64
 ```
+
+Assets carry the `owpurge-*` name from v0.1.1 onward; v0.1.0 predates the rename and
+still has `credo-purge-*` assets.
 
 ---
 
@@ -80,16 +83,16 @@ chmod +x credo-purge-linux-aarch64
 
 | Command | What it does |
 |---|---|
-| `credo-purge census` | Read-only per-category record counts |
-| `credo-purge purge` | Full drain: all categories, all targets, with checkpoint/resume |
-| `credo-purge bulk-purge` | Fast parent-only purge, no child cascade |
-| `credo-purge orphan-sweep` | DidComm messages whose parent exchange is gone |
-| `credo-purge credentials` | Terminal credential exchanges + their message children |
-| `credo-purge proofs` | Terminal proof exchanges + their message children |
-| `credo-purge oob` | Out-of-band invitations |
-| `credo-purge basic-messages` | Basic messages |
-| `credo-purge question-answer` | Question-answer records |
-| `credo-purge tenants` | List tenant ids |
+| `owpurge census` | Read-only per-category record counts |
+| `owpurge purge` | Full drain: all categories, all targets, with checkpoint/resume |
+| `owpurge bulk-purge` | Fast parent-only purge, no child cascade |
+| `owpurge orphan-sweep` | DidComm messages whose parent exchange is gone |
+| `owpurge credentials` | Terminal credential exchanges + their message children |
+| `owpurge proofs` | Terminal proof exchanges + their message children |
+| `owpurge oob` | Out-of-band invitations |
+| `owpurge basic-messages` | Basic messages |
+| `owpurge question-answer` | Question-answer records |
+| `owpurge tenants` | List tenant ids |
 
 Every setting is an environment variable with a fail-safe default; see
 [`.env.example`](.env.example).
@@ -290,9 +293,9 @@ See [`testing/`](testing/) for cloning a wallet locally to test against.
 
 Validation is a counting exercise — establish the numbers, then delete.
 
-1. `credo-purge census` against a target. Record every category total and per-state
+1. `owpurge census` against a target. Record every category total and per-state
    count as the baseline.
-2. `DRY_RUN=true credo-purge bulk-purge`, then `DRY_RUN=true credo-purge purge` on one
+2. `DRY_RUN=true owpurge bulk-purge`, then `DRY_RUN=true owpurge purge` on one
    small target. Eligible counts per track should be consistent with the census.
 3. Go live on that one small target, with a census before and after. The **protected**
    category counts must be unchanged, and `total_records` in the CSV should equal the

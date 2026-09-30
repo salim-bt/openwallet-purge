@@ -1,4 +1,4 @@
-# Local Postgres for testing credo-purge against a clone of a real wallet.
+# Local Postgres for testing owpurge against a clone of a real wallet.
 #
 # postgres:16 to match the agent's own database container. Askar's schema is
 # version '1' and Store::open refuses a mismatch, so the server major version
@@ -11,7 +11,7 @@
 services:
   wallet:
     image: postgres:16
-    container_name: credo-purge-test-db
+    container_name: owpurge-test-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: localtest

@@ -368,5 +368,5 @@ pub fn print_summary(label: &str, stats: &BulkPurgeStats, dry_run: bool) {
     println!("  Credentials : {} parents", stats.credentials.parents);
     println!("  Proofs      : {} parents", stats.proofs.parents);
     println!("  OOB         : {} parents", stats.oob.parents);
-    println!("  NEXT STEP   : run `credo-purge orphan-sweep` on tenant '{label}' to clear message children");
+    println!("  NEXT STEP   : run `owpurge orphan-sweep` on tenant '{label}' to clear message children");
 }

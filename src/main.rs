@@ -1,4 +1,4 @@
-//! openwallet-purge — Askar wallet pruning for a multi-tenant SSI platform.
+//! owpurge — Askar wallet pruning for a multi-tenant SSI platform.
 //!
 //! A single static binary: one env-var contract, stable log shapes, and safety gates
 //! that default to refusing rather than deleting.
@@ -36,7 +36,7 @@ use config::{Config, PurgeMode};
 
 #[derive(Parser)]
 #[command(
-    name = "credo-purge",
+    name = "owpurge",
     about = "Prune stale exchange records from a Credo/Askar wallet",
     long_about = None,
     version
@@ -107,7 +107,7 @@ async fn run() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
     let cfg = Config::from_env()?;
 
-    println!("\nopenwallet-purge  —  {}", command_name(&cli.command));
+    println!("\nowpurge  —  {}", command_name(&cli.command));
     println!("Mode    : {}", match cfg.purge_mode {
         PurgeMode::Dedicated => "dedicated",
         PurgeMode::MultiTenant => "multi-tenant",
@@ -166,7 +166,7 @@ fn single_target(cfg: &Config, command: &str) -> Result<(Option<String>, String)
             let Some(id) = cfg.tenant_id.clone() else {
                 bail!(
                     "TENANT_ID env var is required for {command} in multi-tenant mode. \
-                     Use `credo-purge purge` to process multiple tenants automatically."
+                     Use `owpurge purge` to process multiple tenants automatically."
                 );
             };
             Ok((Some(credo::tenant_profile(&id)), id))

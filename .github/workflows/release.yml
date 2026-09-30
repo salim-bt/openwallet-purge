@@ -1,8 +1,8 @@
 name: Build & publish binary
 
-# Cross-compiles `credo-purge` for Linux aarch64 (Graviton) and/or x86_64 (Intel/AMD)
-# and publishes the binaries as assets on a GitHub Release. The repo is private, so the
-# release and its assets are only reachable by people with access to it — see the
+# Cross-compiles `owpurge` for Linux aarch64 (Graviton) and/or x86_64 (Intel/AMD)
+# and publishes the binaries as assets on a GitHub Release. The repo is public, so the
+# release and its assets are downloadable by anyone, no auth — see the
 # "Download" note at the bottom of this file.
 #
 #   push a tag `v*`   -> builds both architectures, publishes a release for that tag
@@ -78,8 +78,8 @@ jobs:
         id: name
         run: |
           case "${{ matrix.target }}" in
-            aarch64-*) echo "asset=credo-purge-linux-aarch64" >> "$GITHUB_OUTPUT" ;;
-            x86_64-*)  echo "asset=credo-purge-linux-x86_64"  >> "$GITHUB_OUTPUT" ;;
+            aarch64-*) echo "asset=owpurge-linux-aarch64" >> "$GITHUB_OUTPUT" ;;
+            x86_64-*)  echo "asset=owpurge-linux-x86_64"  >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Cache cargo registry, git checkouts and build dir
@@ -109,7 +109,7 @@ jobs:
       - name: Check and checksum
         id: check
         run: |
-          bin="target/${{ matrix.target }}/release/credo-purge"
+          bin="target/${{ matrix.target }}/release/owpurge"
           mkdir -p dist
           cp "$bin" "dist/${{ steps.name.outputs.asset }}"
           cd dist
@@ -158,9 +158,10 @@ jobs:
               --target "${{ github.sha }}"
           fi
 
-# Download (on a private repo `gh` handles the auth; a plain curl of the browser URL
-# returns HTML, not the binary):
+# Download (public repo, so a plain curl of the asset URL works; `gh` is just the
+# convenient route from a checkout). Assets are named `owpurge-*` from v0.1.1 on —
+# v0.1.0 predates the rename and carries the old `credo-purge-*` name:
 #
-#   gh release download v0.1.0 -p 'credo-purge-linux-aarch64*'
-#   sha256sum -c credo-purge-linux-aarch64.sha256
-#   chmod +x credo-purge-linux-aarch64
+#   gh release download v0.1.1 -p 'owpurge-linux-aarch64*'
+#   sha256sum -c owpurge-linux-aarch64.sha256
+#   chmod +x owpurge-linux-aarch64
