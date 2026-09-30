@@ -1,15 +1,14 @@
 name: Publish to crates.io
 
-# Manual only, and defaults to a dry run. Publishing is irreversible: crates.io never
-# deletes a version, and yanking only hides it from resolution — the source stays
-# downloadable. So a real upload has to be asked for twice (untick dry-run AND type the
-# version).
+# Manual only, and every run that reaches the end uploads. Publishing is irreversible:
+# crates.io never deletes a version, and yanking only hides it from resolution — the
+# source stays downloadable. Typing the version in `confirm_version` is the one gate, so
+# it must match the manifest exactly or the run stops before the upload.
 #
 # NOTE: this workflow used to scan the staged package against a LEAK_PATTERN secret
 # before uploading. That step was removed on request. Nothing now checks the package for
-# internal identifiers, and a crates.io version can never be withdrawn — yanking only
-# hides it from resolution, the source stays downloadable. Scan by hand before a real
-# upload:
+# internal identifiers, and a crates.io version can never be withdrawn. Scan by hand
+# before dispatching:
 #
 #   cargo package --locked
 #   grep -rliE '<pattern>' target/package/<name>-<version>
@@ -17,14 +16,10 @@ name: Publish to crates.io
 on:
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: Dry run — package and verify, upload nothing
-        type: boolean
-        default: true
       confirm_version:
-        description: To publish for real, untick dry-run AND type the version here (e.g. 0.1.0)
+        description: Type the version to publish (e.g. 0.1.2). Must match Cargo.toml.
         type: string
-        default: ''
+        required: true
 
 permissions:
   contents: read
@@ -44,18 +39,9 @@ jobs:
           cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[0] | "name=\(.name)", "version=\(.version)"' >> "$GITHUB_OUTPUT"
 
-      # Builds target/package/<name>-<version>/ — the exact tree that gets uploaded.
-      - name: Package and verify
-        run: |
-          cargo package --locked
-          cargo package --list --locked
-
-      - name: Stop here on a dry run
-        if: ${{ inputs.dry_run }}
-        run: echo "Dry run — packaged, verified, and the crates.io trust checked below. Nothing uploaded."
-
-      - name: Confirm the real upload
-        if: ${{ !inputs.dry_run }}
+      # The only gate left before an irreversible upload, so it runs before anything is
+      # built: a typo costs a few seconds rather than a wasted version number.
+      - name: Confirm the version
         env:
           CONFIRM: ${{ inputs.confirm_version }}
           VERSION: ${{ steps.v.outputs.version }}
@@ -64,6 +50,13 @@ jobs:
             echo "::error::confirm_version was '$CONFIRM' but the manifest says '$VERSION'. Refusing to publish."
             exit 1
           fi
+          echo "Publishing ${{ steps.v.outputs.name }} $VERSION."
+
+      # Builds target/package/<name>-<version>/ — the exact tree that gets uploaded.
+      - name: Package and verify
+        run: |
+          cargo package --locked
+          cargo package --list --locked
 
       # Trusted Publishing. Exchanges this run's OIDC identity for a crates.io token that
       # lasts minutes and is only valid from this workflow, so no long-lived credential
@@ -75,18 +68,11 @@ jobs:
       #
       # If that registration is missing or the values do not match, this step fails and
       # nothing is uploaded.
-      #
-      # Deliberately NOT gated on dry_run. Minting is read-only — it proves the trust
-      # relationship without publishing anything — so a dry run exercises the auth path
-      # too and a green dry run means the next real upload will authenticate. Gating it
-      # would leave the credential path untested until the irreversible step. The token
-      # is scoped to this run and expires in minutes; on a dry run it simply goes unused.
       - name: Mint a short-lived crates.io token
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish
-        if: ${{ !inputs.dry_run }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked --no-verify
