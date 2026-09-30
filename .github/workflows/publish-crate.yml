@@ -28,8 +28,9 @@ on:
 
 permissions:
   contents: read
-  # Uncomment when switching to Trusted Publishing (see the note above the publish step).
-  # id-token: write
+  # Lets the job mint the OIDC assertion that crates.io exchanges for a short-lived
+  # publish token. Required by Trusted Publishing.
+  id-token: write
 
 jobs:
   publish:
@@ -63,34 +64,24 @@ jobs:
             echo "::error::confirm_version was '$CONFIRM' but the manifest says '$VERSION'. Refusing to publish."
             exit 1
           fi
-          if [ -z "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
-            echo "::error::Secret CARGO_REGISTRY_TOKEN is not set. Add it with: gh secret set CARGO_REGISTRY_TOKEN"
-            exit 1
-          fi
 
-      # AFTER 0.1.0 IS ON crates.io, replace the stored token with Trusted Publishing:
+      # Trusted Publishing. Exchanges this run's OIDC identity for a crates.io token that
+      # lasts minutes and is only valid from this workflow, so no long-lived credential
+      # sits in the repo. Nothing to configure here beyond `id-token: write` above — the
+      # trust is registered on the crates.io side, against:
       #
-      #   1. crates.io -> the crate -> Settings -> Trusted Publishing -> add this repo
-      #      and this workflow's filename (publish-crate.yml).
-      #   2. Uncomment `id-token: write` in `permissions:` above, and the auth step below.
-      #   3. Point the publish step at `steps.auth.outputs.token`.
-      #   4. Drop the CARGO_REGISTRY_TOKEN check from "Confirm the real upload".
-      #   5. gh secret delete CARGO_REGISTRY_TOKEN
+      #   repository:        salim-bt/openwallet-purge
+      #   workflow filename: publish-crate.yml
       #
-      # The stored token is long-lived and sits in the repo until someone rotates it; the
-      # OIDC-minted one lasts minutes and is only usable from this workflow. Trusted
-      # Publishing cannot be configured before the crate exists, which is why the first
-      # publish has to use a token.
-      #
-      # - name: Mint a short-lived crates.io token
-      #   id: auth
-      #   if: ${{ !inputs.dry_run }}
-      #   uses: rust-lang/crates-io-auth-action@v1
+      # If that registration is missing or the values do not match, this step fails and
+      # nothing is uploaded.
+      - name: Mint a short-lived crates.io token
+        id: auth
+        if: ${{ !inputs.dry_run }}
+        uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          # Trusted Publishing: swap the line above for
-          # CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked --no-verify
