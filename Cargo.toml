@@ -1,6 +1,6 @@
 [package]
 name = "owpurge"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.81"
 description = "Askar wallet pruning for multi-tenant SSI platforms: a single static binary that prunes stale exchange records straight from the wallet store"
