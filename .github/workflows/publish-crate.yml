@@ -3,7 +3,16 @@ name: Publish to crates.io
 # Manual only, and defaults to a dry run. Publishing is irreversible: crates.io never
 # deletes a version, and yanking only hides it from resolution — the source stays
 # downloadable. So a real upload has to be asked for twice (untick dry-run AND type the
-# version), and a leak guard runs before either path.
+# version).
+#
+# NOTE: this workflow used to scan the staged package against a LEAK_PATTERN secret
+# before uploading. That step was removed on request. Nothing now checks the package for
+# internal identifiers, and a crates.io version can never be withdrawn — yanking only
+# hides it from resolution, the source stays downloadable. Scan by hand before a real
+# upload:
+#
+#   cargo package --locked
+#   grep -rliE '<pattern>' target/package/<name>-<version>
 
 on:
   workflow_dispatch:
@@ -39,35 +48,6 @@ jobs:
         run: |
           cargo package --locked
           cargo package --list --locked
-
-      # The package ships to a public registry forever, so fail loudly rather than let an
-      # identifier slip in via a later edit. This scans the STAGED PACKAGE, not the
-      # checkout: files the manifest excludes (testing/, logs/) legitimately contain local
-      # paths and are none of this guard's business.
-      #
-      # The pattern lives in the LEAK_PATTERN repo secret — an ERE alternation such as
-      # 'foo|bar'. Writing it inline would publish, in a public repo, the very list the
-      # guard exists to keep out. For the same reason it reports matching FILENAMES only:
-      # printing matched lines would echo the identifier straight into a public build log.
-      #
-      # Unset (a fork, or before the secret is added) the guard is skipped loudly rather
-      # than passing silently, so a green check never implies a scan that did not run.
-      - name: Leak guard
-        env:
-          STAGED: target/package/${{ steps.v.outputs.name }}-${{ steps.v.outputs.version }}
-          LEAK_PATTERN: ${{ secrets.LEAK_PATTERN }}
-        run: |
-          test -d "$STAGED" || { echo "::error::$STAGED not found"; exit 1; }
-          if [ -z "$LEAK_PATTERN" ]; then
-            echo "::warning::LEAK_PATTERN secret is not set — leak guard SKIPPED, nothing was scanned."
-            exit 0
-          fi
-          if grep -rliE "$LEAK_PATTERN" "$STAGED" > /tmp/leak-hits 2>/dev/null; then
-            echo "::error::Internal identifier found in files that would be published:"
-            sed "s|^$STAGED/||" /tmp/leak-hits
-            exit 1
-          fi
-          echo "Leak guard passed over $(find "$STAGED" -type f | wc -l) staged files."
 
       - name: Stop here on a dry run
         if: ${{ inputs.dry_run }}
