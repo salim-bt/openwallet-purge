@@ -52,7 +52,7 @@ jobs:
 
       - name: Stop here on a dry run
         if: ${{ inputs.dry_run }}
-        run: echo "Dry run only — packaged and verified, nothing uploaded."
+        run: echo "Dry run — packaged, verified, and the crates.io trust checked below. Nothing uploaded."
 
       - name: Confirm the real upload
         if: ${{ !inputs.dry_run }}
@@ -75,9 +75,14 @@ jobs:
       #
       # If that registration is missing or the values do not match, this step fails and
       # nothing is uploaded.
+      #
+      # Deliberately NOT gated on dry_run. Minting is read-only — it proves the trust
+      # relationship without publishing anything — so a dry run exercises the auth path
+      # too and a green dry run means the next real upload will authenticate. Gating it
+      # would leave the credential path untested until the irreversible step. The token
+      # is scoped to this run and expires in minutes; on a dry run it simply goes unused.
       - name: Mint a short-lived crates.io token
         id: auth
-        if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish
