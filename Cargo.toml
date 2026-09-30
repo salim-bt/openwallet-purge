@@ -1,0 +1,54 @@
+[package]
+name = "openwallet-purge"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+description = "Askar wallet pruning for multi-tenant SSI platforms: a single static binary that prunes stale exchange records straight from the wallet store"
+license = "Apache-2.0"
+
+exclude = [
+    "/*.dump",
+    "/logs/*",
+    "/testing/*",
+    "/.github/*"
+]
+
+[[bin]]
+name = "credo-purge"
+path = "src/main.rs"
+
+[dependencies]
+# `aries-askar` is the storage library the wallet itself is built on, linked directly
+# here rather than reached through a language binding.
+#
+# Pinned to an exact tag so the store schema version this binary expects matches the
+# one the running agent provisioned (postgres schema version '1'; Store::open FAILS on
+# a mismatch rather than migrating — see askar-storage/src/backend/postgres/provision.rs).
+#
+# 0.4.6 and 0.5.0 were verified to produce byte-identical purge results on a real
+# wallet (same surviving rows, same tags), so either works; the API surface used here
+# — Store::open/scan/session/transaction, Session::count/fetch_all/remove/remove_all,
+# OrderBy — is unchanged between them.
+#
+# Taken from crates.io rather than the git tag: crates.io rejects packages carrying git
+# dependencies, so the git+tag form could not be published. The cost is that this is a
+# semver range rather than an exact commit — pin it in Cargo.lock, which is committed.
+# (0.5.0, by contrast, exists only as a git tag and could not be used here at all.)
+#
+# default-features=false drops ffi/logger/migration; "postgres" pulls
+# askar-storage/postgres (sqlx + rustls). No sqlite backend is compiled in.
+aries-askar = { version = "0.4.6", default-features = false, features = ["postgres"] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+anyhow = "1"
+dotenvy = "0.15"
+percent-encoding = "2.3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

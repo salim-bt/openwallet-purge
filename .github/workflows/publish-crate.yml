@@ -1,0 +1,116 @@
+name: Publish to crates.io
+
+# Manual only, and defaults to a dry run. Publishing is irreversible: crates.io never
+# deletes a version, and yanking only hides it from resolution — the source stays
+# downloadable. So a real upload has to be asked for twice (untick dry-run AND type the
+# version), and a leak guard runs before either path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run — package and verify, upload nothing
+        type: boolean
+        default: true
+      confirm_version:
+        description: To publish for real, untick dry-run AND type the version here (e.g. 0.1.0)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  # Uncomment when switching to Trusted Publishing (see the note above the publish step).
+  # id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve name and version
+        id: v
+        run: |
+          cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[0] | "name=\(.name)", "version=\(.version)"' >> "$GITHUB_OUTPUT"
+
+      # Builds target/package/<name>-<version>/ — the exact tree that gets uploaded.
+      - name: Package and verify
+        run: |
+          cargo package --locked
+          cargo package --list --locked
+
+      # The package ships to a public registry forever, so fail loudly rather than let an
+      # identifier slip in via a later edit. This scans the STAGED PACKAGE, not the
+      # checkout: files the manifest excludes (testing/, logs/) legitimately contain local
+      # paths and are none of this guard's business.
+      #
+      # The pattern lives in the LEAK_PATTERN repo secret — an ERE alternation such as
+      # 'foo|bar'. Writing it inline would publish, in a public repo, the very list the
+      # guard exists to keep out. For the same reason it reports matching FILENAMES only:
+      # printing matched lines would echo the identifier straight into a public build log.
+      #
+      # Unset (a fork, or before the secret is added) the guard is skipped loudly rather
+      # than passing silently, so a green check never implies a scan that did not run.
+      - name: Leak guard
+        env:
+          STAGED: target/package/${{ steps.v.outputs.name }}-${{ steps.v.outputs.version }}
+          LEAK_PATTERN: ${{ secrets.LEAK_PATTERN }}
+        run: |
+          test -d "$STAGED" || { echo "::error::$STAGED not found"; exit 1; }
+          if [ -z "$LEAK_PATTERN" ]; then
+            echo "::warning::LEAK_PATTERN secret is not set — leak guard SKIPPED, nothing was scanned."
+            exit 0
+          fi
+          if grep -rliE "$LEAK_PATTERN" "$STAGED" > /tmp/leak-hits 2>/dev/null; then
+            echo "::error::Internal identifier found in files that would be published:"
+            sed "s|^$STAGED/||" /tmp/leak-hits
+            exit 1
+          fi
+          echo "Leak guard passed over $(find "$STAGED" -type f | wc -l) staged files."
+
+      - name: Stop here on a dry run
+        if: ${{ inputs.dry_run }}
+        run: echo "Dry run only — packaged and verified, nothing uploaded."
+
+      - name: Confirm the real upload
+        if: ${{ !inputs.dry_run }}
+        env:
+          CONFIRM: ${{ inputs.confirm_version }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if [ "$CONFIRM" != "$VERSION" ]; then
+            echo "::error::confirm_version was '$CONFIRM' but the manifest says '$VERSION'. Refusing to publish."
+            exit 1
+          fi
+          if [ -z "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
+            echo "::error::Secret CARGO_REGISTRY_TOKEN is not set. Add it with: gh secret set CARGO_REGISTRY_TOKEN"
+            exit 1
+          fi
+
+      # AFTER 0.1.0 IS ON crates.io, replace the stored token with Trusted Publishing:
+      #
+      #   1. crates.io -> the crate -> Settings -> Trusted Publishing -> add this repo
+      #      and this workflow's filename (publish-crate.yml).
+      #   2. Uncomment `id-token: write` in `permissions:` above, and the auth step below.
+      #   3. Point the publish step at `steps.auth.outputs.token`.
+      #   4. Drop the CARGO_REGISTRY_TOKEN check from "Confirm the real upload".
+      #   5. gh secret delete CARGO_REGISTRY_TOKEN
+      #
+      # The stored token is long-lived and sits in the repo until someone rotates it; the
+      # OIDC-minted one lasts minutes and is only usable from this workflow. Trusted
+      # Publishing cannot be configured before the crate exists, which is why the first
+      # publish has to use a token.
+      #
+      # - name: Mint a short-lived crates.io token
+      #   id: auth
+      #   if: ${{ !inputs.dry_run }}
+      #   uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # Trusted Publishing: swap the line above for
+          # CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked --no-verify

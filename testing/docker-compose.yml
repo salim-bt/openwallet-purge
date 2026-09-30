@@ -1,0 +1,33 @@
+# Local Postgres for testing credo-purge against a clone of a real wallet.
+#
+# postgres:16 to match the agent's own database container. Askar's schema is
+# version '1' and Store::open refuses a mismatch, so the server major version
+# should match whatever wrote the data - check with SELECT version() on the source.
+#
+#   docker compose up -d
+#   ./clone-from-prod.sh <wallet-db-name>
+#
+# Port 5433 locally so it cannot collide with a local 5432.
+services:
+  wallet:
+    image: postgres:16
+    container_name: credo-purge-test-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localtest
+      POSTGRES_DB: postgres
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - wallet-data:/var/lib/postgresql/data
+    # Askar fires many small statements; the defaults are fine, but more connections
+    # than the default 100 lets you exercise DB_MAX_CONNECTIONS realistically.
+    command: ["postgres", "-c", "max_connections=200"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  wallet-data:

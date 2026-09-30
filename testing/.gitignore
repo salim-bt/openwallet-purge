@@ -1,0 +1,4 @@
+*.dump
+*.sql
+.env.local
+.pgpass-prod
