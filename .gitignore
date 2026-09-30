@@ -1,0 +1,10 @@
+/target
+.env
+.env.local
+*.tmp
+*.dump
+*.sql
+.pgpass-prod
+logs/
+purge-checkpoint*.json
+/dist

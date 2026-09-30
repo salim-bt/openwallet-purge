@@ -1,0 +1,167 @@
+name: Build & publish binary
+
+# Cross-compiles `owpurge` for Linux aarch64 (Graviton) and/or x86_64 (Intel/AMD)
+# and publishes the binaries as assets on a GitHub Release. The repo is public, so the
+# release and its assets are downloadable by anyone, no auth — see the
+# "Download" note at the bottom of this file.
+#
+#   push a tag `v*`   -> builds both architectures, publishes a release for that tag
+#   run manually      -> pick the architecture; publishes only if you name a tag,
+#                        otherwise the binaries land as a workflow artifact
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: Architecture to build
+        type: choice
+        options:
+          - both
+          - arm64 (aarch64, Graviton)
+          - amd64 (x86_64, Intel/AMD)
+        default: both
+      tag:
+        description: Tag to publish a release for (leave blank to only upload a workflow artifact)
+        type: string
+        default: ''
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  # Pinned so a new cross release cannot silently change the toolchain/glibc floor.
+  CROSS_VERSION: v0.2.5
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.pick.outputs.targets }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        env:
+          ARCH: ${{ inputs.arch || 'both' }}
+        run: |
+          case "$ARCH" in
+            arm64*) targets='["aarch64-unknown-linux-gnu"]' ;;
+            amd64*) targets='["x86_64-unknown-linux-gnu"]' ;;
+            *)      targets='["aarch64-unknown-linux-gnu","x86_64-unknown-linux-gnu"]' ;;
+          esac
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+          # A tag push publishes to that tag; a manual run only if one was named.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Name the asset
+        id: name
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-*) echo "asset=owpurge-linux-aarch64" >> "$GITHUB_OUTPUT" ;;
+            x86_64-*)  echo "asset=owpurge-linux-x86_64"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Cache cargo registry, git checkouts and build dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      # cross builds inside the ghcr.io/cross-rs images, which are built on an older
+      # glibc than the GitHub runner. Linking against the runner's own glibc (2.39)
+      # would produce a binary that refuses to start on Amazon Linux 2023 (glibc 2.34).
+      - name: Install cross
+        run: |
+          curl -sSfL "https://github.com/cross-rs/cross/releases/download/${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin" cross cross-util
+          cross --version
+
+      - name: Build
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Check and checksum
+        id: check
+        run: |
+          bin="target/${{ matrix.target }}/release/owpurge"
+          mkdir -p dist
+          cp "$bin" "dist/${{ steps.name.outputs.asset }}"
+          cd dist
+          sha256sum "${{ steps.name.outputs.asset }}" > "${{ steps.name.outputs.asset }}.sha256"
+          file "${{ steps.name.outputs.asset }}"
+          cat "${{ steps.name.outputs.asset }}.sha256"
+          # Oldest glibc symbol version the binary demands, so a host mismatch shows up
+          # here rather than as "version `GLIBC_2.x' not found" on the EC2 box.
+          # readelf parses foreign-architecture ELF files, objdump on the x86 runner may not.
+          echo "glibc floor: $(readelf -W --dyn-syms "${{ steps.name.outputs.asset }}" \
+            | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.asset }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-running for the same tag replaces the assets rather than failing.
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --generate-notes \
+              ${{ inputs.prerelease == true && '--prerelease' || '' }} \
+              --target "${{ github.sha }}"
+          fi
+
+# Download (public repo, so a plain curl of the asset URL works; `gh` is just the
+# convenient route from a checkout). Assets are named `owpurge-*` from v0.1.1 on —
+# v0.1.0 predates the rename and carries the old `credo-purge-*` name:
+#
+#   gh release download v0.1.1 -p 'owpurge-linux-aarch64*'
+#   sha256sum -c owpurge-linux-aarch64.sha256
+#   chmod +x owpurge-linux-aarch64
