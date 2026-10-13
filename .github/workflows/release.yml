@@ -1,7 +1,9 @@
 name: Build & publish binary
 
 # Cross-compiles `owpurge` for Linux aarch64 (Graviton) and/or x86_64 (Intel/AMD)
-# and publishes the binaries as assets on a GitHub Release. The repo is public, so the
+# and publishes the binaries as assets on a GitHub Release. The binaries are static
+# (musl), so they run on any Linux of the right architecture regardless of its glibc —
+# verified down to CentOS 7 (glibc 2.17). The repo is public, so the
 # release and its assets are downloadable by anyone, no auth — see the
 # "Download" note at the bottom of this file.
 #
@@ -36,7 +38,7 @@ permissions:
   contents: write
 
 env:
-  # Pinned so a new cross release cannot silently change the toolchain/glibc floor.
+  # Pinned so a new cross release cannot silently change the toolchain.
   CROSS_VERSION: v0.2.5
 
 jobs:
@@ -51,9 +53,9 @@ jobs:
           ARCH: ${{ inputs.arch || 'both' }}
         run: |
           case "$ARCH" in
-            arm64*) targets='["aarch64-unknown-linux-gnu"]' ;;
-            amd64*) targets='["x86_64-unknown-linux-gnu"]' ;;
-            *)      targets='["aarch64-unknown-linux-gnu","x86_64-unknown-linux-gnu"]' ;;
+            arm64*) targets='["aarch64-unknown-linux-musl"]' ;;
+            amd64*) targets='["x86_64-unknown-linux-musl"]' ;;
+            *)      targets='["aarch64-unknown-linux-musl","x86_64-unknown-linux-musl"]' ;;
           esac
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
 
@@ -94,9 +96,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
-      # cross builds inside the ghcr.io/cross-rs images, which are built on an older
-      # glibc than the GitHub runner. Linking against the runner's own glibc (2.39)
-      # would produce a binary that refuses to start on Amazon Linux 2023 (glibc 2.34).
+      # cross builds inside the ghcr.io/cross-rs images, which carry the musl toolchain
+      # (and the C cross-compiler `ring` needs) for both targets.
       - name: Install cross
         run: |
           curl -sSfL "https://github.com/cross-rs/cross/releases/download/${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz" \
@@ -116,11 +117,13 @@ jobs:
           sha256sum "${{ steps.name.outputs.asset }}" > "${{ steps.name.outputs.asset }}.sha256"
           file "${{ steps.name.outputs.asset }}"
           cat "${{ steps.name.outputs.asset }}.sha256"
-          # Oldest glibc symbol version the binary demands, so a host mismatch shows up
-          # here rather than as "version `GLIBC_2.x' not found" on the EC2 box.
-          # readelf parses foreign-architecture ELF files, objdump on the x86 runner may not.
-          echo "glibc floor: $(readelf -W --dyn-syms "${{ steps.name.outputs.asset }}" \
-            | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          # Must be fully static: no program interpreter and no shared-library deps.
+          # Anything else would tie the binary to the host's libc again. readelf parses
+          # foreign-architecture ELF files; objdump on the x86 runner may not.
+          if readelf -W -l -d "${{ steps.name.outputs.asset }}" | grep -E 'INTERP|NEEDED'; then
+            echo "::error::binary is dynamically linked"; exit 1
+          fi
+          echo "static: ok"
 
       - uses: actions/upload-artifact@v4
         with:

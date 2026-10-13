@@ -33,8 +33,11 @@ behaviour — is never reached.
 cargo build --release          # -> target/release/owpurge  (~3.4 MB)
 ```
 
-Only system libraries are dynamically linked (no OpenSSL — TLS is rustls, compiled in).
-Copy the one file to the host and run it.
+A native build links the host's system libraries (no OpenSSL — TLS is rustls,
+compiled in). The **release binaries are fully static** (musl): no libc dependency at
+all, so they run on any Linux of the right architecture — checked on CentOS 7
+(glibc 2.17), Ubuntu 18.04 and Debian 10, including a Postgres connection by
+hostname. Copy the one file to the host and run it.
 
 **Building for the Linux EC2 host from macOS** — either build on the host itself
 (`cargo` + a git checkout) or cross-compile.
@@ -45,8 +48,8 @@ it.
 
 ```sh
 cargo install cross
-cross build --release --target aarch64-unknown-linux-gnu   # Graviton hosts
-cross build --release --target x86_64-unknown-linux-gnu    # Intel/AMD hosts
+cross build --release --target aarch64-unknown-linux-musl   # Graviton / ARM hosts
+cross build --release --target x86_64-unknown-linux-musl    # Intel/AMD hosts
 ```
 
 Note `Cargo.toml` pins Askar to an exact **git tag**, so the first build needs network
@@ -59,10 +62,17 @@ on crates.io, so at that version the git dependency can be replaced with a plain
 **CI builds** — `.github/workflows/release.yml` cross-compiles both Linux targets and
 attaches them to a GitHub Release. Pushing a `v*` tag builds both architectures;
 running the workflow by hand lets you pick one, and publishes only if you name a tag
-(otherwise the binaries are left as a workflow artifact). It uses `cross` rather than
-the runner's own toolchain on purpose: the runner links against glibc 2.39, which
-would not start on Amazon Linux 2023 (glibc 2.34). The build log prints the binary's
-glibc floor so a mismatch shows up there rather than on the host.
+(otherwise the binaries are left as a workflow artifact). It builds the `*-linux-musl`
+targets with `cross`, and the build fails if the result has any dynamic dependency, so
+a binary that would depend on the host's glibc can never be published.
+
+`cross` 0.2.5 does not run on Apple Silicon. To build a static `aarch64` binary there,
+build natively inside Alpine (itself musl):
+
+```sh
+docker run --rm -v "$PWD":/src -w /src -e CARGO_TARGET_DIR=/src/target/alpine \
+  rust:1-alpine sh -c 'apk add -q musl-dev && cargo build --release --locked'
+```
 
 The repo is public, so the assets download without auth — a plain `curl -L` of the
 asset URL works. `gh` is just the convenient route from a checkout; otherwise pass
