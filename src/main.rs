@@ -20,6 +20,7 @@ mod checkpoint;
 mod config;
 mod credo;
 mod deletes;
+mod env_apply;
 mod orphans;
 mod progress;
 mod scan;
@@ -90,6 +91,33 @@ enum Command {
     QuestionAnswer,
     /// List every tenant id registered in the wallet.
     Tenants,
+    /// Update an existing agent .env from a values file. Does not touch the wallet.
+    ///
+    /// Keys present are updated in place, missing keys appended, everything else left
+    /// alone; the original is backed up first. Directives in the values file:
+    /// @prompt, @prompt-url, @random-hex:N (only fills a missing/empty key). See
+    /// src/env_apply.rs.
+    EnvApply {
+        /// Values file in dotenv syntax; "-" reads stdin (prompts then use the terminal).
+        #[arg(long)]
+        values: String,
+        /// The .env to edit. Must already exist. Asked for on the terminal if omitted.
+        #[arg(long)]
+        env: Option<std::path::PathBuf>,
+        /// KEY=VALUE — answers a prompt non-interactively, or overrides/adds a key.
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Update existing values without asking (they are still shown).
+        #[arg(long)]
+        yes: bool,
+        /// Print a JSON file (e.g. the agent's config) for review before the prompts,
+        /// with secret-looking fields masked. Without a path, asks for one.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+        review_json: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -105,6 +133,23 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> Result<std::process::ExitCode> {
     let cli = Cli::parse();
+
+    // Needs none of the wallet configuration, so it runs before that is loaded.
+    if let Command::EnvApply { values, env, set, dry_run, yes, review_json } = &cli.command {
+        let review_json = review_json
+            .as_deref()
+            .map(|p| (!p.is_empty()).then_some(std::path::Path::new(p)));
+        env_apply::run(env_apply::Args {
+            values,
+            env: env.as_deref(),
+            set,
+            dry_run: *dry_run,
+            yes: *yes,
+            review_json,
+        })?;
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
+
     let cfg = Config::from_env()?;
 
     println!("\nowpurge  —  {}", command_name(&cli.command));
@@ -151,6 +196,7 @@ fn command_name(c: &Command) -> &'static str {
         Command::BasicMessages => "basic messages",
         Command::QuestionAnswer => "question-answer",
         Command::Tenants => "tenants",
+        Command::EnvApply { .. } => "env-apply",
     }
 }
 
@@ -343,6 +389,8 @@ async fn dispatch(
         }
 
         Command::Purge => return run_full_purge(store, cfg, audit).await,
+
+        Command::EnvApply { .. } => unreachable!("handled in run() before the store opens"),
     }
 
     Ok(std::process::ExitCode::SUCCESS)

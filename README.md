@@ -93,11 +93,57 @@ still has `credo-purge-*` assets.
 | `owpurge basic-messages` | Basic messages |
 | `owpurge question-answer` | Question-answer records |
 | `owpurge tenants` | List tenant ids |
+| `owpurge env-apply` | Update an existing agent `.env` from a values file (does not touch the wallet) |
 
 Every setting is an environment variable with a fail-safe default; see
 [`.env.example`](.env.example).
 
 `ConnectionRecord` is never deleted and there is deliberately no subcommand for it.
+
+### `env-apply`: updating an agent `.env`
+
+Brings an existing dotenv file in line with a values file. Keys already present are
+rewritten in place (every occurrence), missing keys are appended, and every other line
+is left as it was. The original is copied to `<file>.bak-<timestamp>` first and the
+file keeps its permissions.
+
+When a value from the values file would replace a **different, non-empty** value already
+in the file, both are shown and the runner is asked (`Update it? [Y/n]`; Enter updates,
+`n` keeps the current value). Filling a missing or empty key does not ask. Prompted keys
+show their current value in the prompt instead, so typing a new one is the decision.
+`--yes` updates without asking (both values are still printed), for runs with no
+terminal. Keys whose name looks secret are shown masked (`********` plus the last four
+characters).
+
+The values file uses dotenv syntax, plus these directives:
+
+```sh
+API_KEY=@random-hex:32        # 32 random bytes as hex, ONLY if API_KEY is missing/empty
+PUBLIC_URL=@prompt-url        # asked on the terminal; must be http(s); trailing / stripped
+SOME_SETTING=@prompt          # asked on the terminal; blank keeps the current value
+LOG_FORMAT=json               # literal (write @@ for a value that starts with @)
+```
+
+```sh
+owpurge env-apply --values values.env --env /path/to/agent/.env --dry-run
+owpurge env-apply --values values.env --env /path/to/agent/.env
+# --env omitted: asks for the path on the terminal
+owpurge env-apply --values values.env
+# values on stdin; prompts still go to the terminal:
+decode-values | owpurge env-apply --values - --env /path/to/agent/.env
+# non-interactive (no terminal): answer prompts up front
+owpurge env-apply --values values.env --env .env --set PUBLIC_URL=https://host.example
+```
+
+`--review-json [PATH]` prints a JSON file — typically the agent's own config — before
+any prompt, so the person running it can check the box first. Without a path it asks
+for one. Any field whose name contains `key`, `password`, `secret`, `token`, `seed`,
+`private` or `mnemonic` is masked as `********` (empty values stay visible, so "unset"
+is distinguishable from "set"); everything else prints as-is, in file order.
+
+`@random-hex` never replaces an existing value. Rotating a key that clients already hold
+would lock them out, so rotation stays a deliberate manual edit. The agent has to be
+restarted to pick up the changes.
 
 ### Multi-tenant mode is blocked
 
@@ -303,9 +349,11 @@ Validation is a counting exercise — establish the numbers, then delete.
 4. Work up to the largest target last.
 
 ```sh
-cargo test        # 20 tests: category/state constant invariants, fail-safe TTL
+cargo test        # 30 tests: category/state constant invariants, fail-safe TTL
                   # resolution, store-URI encoding, CSV escaping and appending,
-                  # and that multi-tenant stays blocked while dedicated does not
+                  # that multi-tenant stays blocked while dedicated does not,
+                  # and env-apply's parsing, in-place editing, key preservation
+                  # review masking and update confirmation
 ```
 
 ## Validated against a production-scale wallet
